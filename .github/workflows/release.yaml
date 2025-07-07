@@ -1,0 +1,17 @@
+name: Release
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+jobs:
+  Build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: latest
+      - uses: obu-labs/vinaya-notes-module-releaser@main
+        with:
+          path: latest
+
