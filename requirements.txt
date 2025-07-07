@@ -1,0 +1,6 @@
+joblib
+beautifulsoup4
+markdownify
+unidecode
+requests
+git+https://github.com/obu-labs/vnmutils.git@main#egg=vnmutils

@@ -7,12 +7,19 @@ on:
 jobs:
   Build:
     runs-on: ubuntu-latest
-    if: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          path: latest
+          python-version: '3.10'
+      - uses: actions/checkout@v4
+      - run: |
+          wget "https://github.com/obu-labs/pali-vinaya-notes/releases/latest/download/scidmap.json"
+          pip install -r requirements.txt
+          python bmc.py
       - uses: obu-labs/vinaya-notes-module-releaser@main
         with:
-          path: latest
-
+          path: "The BMC"
+          metadata_file: metadata.yaml
+      - env:
+          GH_TOKEN: ${{ secrets.VINAYA_SITE_PUSH_TOKEN }}
+        run: gh --repo obu-labs/vinaya workflow run build.yaml
