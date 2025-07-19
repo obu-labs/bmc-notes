@@ -240,9 +240,18 @@ def _build_plan_from_toc(toc_element: bs4.element.Tag, cwd: Path) -> list[tuple[
       elif prefix == "BMCv2" and cwd.name == "General Transaction Statements":
         ret.append((cwd.joinpath(f"{prefix} Transaction Statements Regarding {link.text[3:].replace('&', 'and')}.md"), url))
       elif prefix == "BMCv2" and cwd.name == "Going-forth and Acceptance":
-        ret.append((cwd.joinpath(f"{prefix} Transaction Statements for {link.text[3:].replace(':', '')}.md"), url))
+        if link.text.startswith("Going"):
+          ret.append((cwd.joinpath(f"{prefix} Introduction to the Transaction Statements for Going-forth and Acceptance.md"), url))
+        else:
+          ret.append((cwd.joinpath(f"{prefix} Transaction Statements for {link.text[3:].replace(':', '')}.md"), url))
       elif prefix == "BMCv2" and cwd.name == "Disciplinary Transactions":
-        ret.append((cwd.joinpath(f"{prefix} Transaction Statements for {link.text[3:]}.md"), url))
+        if link.text.startswith("Disciplinary"):
+          if cwd.parent.name == "Appendices":
+            ret.append((cwd.joinpath(f"{prefix} Introduction to the Transaction Statements for the Disciplinary Transactions.md"), url))
+          else:
+            ret.append((cwd.joinpath(f"{prefix} Disciplinary Transactions.md"), url))
+        else:
+          ret.append((cwd.joinpath(f"{prefix} Transaction Statements for {link.text[3:]}.md"), url))
       elif prefix == "BMCv2" and cwd.name == "Technical Terms":
         technical_term = link.text
         # fill in the translation for this one too
