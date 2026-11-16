@@ -21,7 +21,8 @@ jobs:
         with:
           python-version: '3.12'
       - uses: actions/checkout@main
-      - run: |
+      - name: Build
+        run: |
           wget "https://github.com/obu-labs/pali-vinaya-notes/releases/latest/download/scidmap.json"
           pip install -r requirements.txt
           python bmc.py

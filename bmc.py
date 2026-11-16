@@ -306,10 +306,11 @@ def forumlate_plan() -> list[tuple[Path, str]]:
 
 @cache
 def cached_soup(href: str) -> bs4.element.Tag:
-  return bs4.BeautifulSoup(
+  soup = bs4.BeautifulSoup(
     cached_get(bmc_href_to_uri(href)),
     'html.parser',
-  ).find(id="vinaya")
+  )
+  return soup.find(id="content") or soup.find(id="vinaya")
 
 @cache
 def cooked_soup(href: str) -> bs4.element.Tag:
@@ -432,11 +433,11 @@ def build_internal_link_map(plan: list[tuple[Path, str]]) -> dict[str, str]:
   plan_for_each_page = defaultdict(dict)
   for doc in plan:
     s = doc[1].split("#")
-    anchor = s[1] if len(s) > 1 else 'vinaya'
+    anchor = s[1] if len(s) > 1 else 'content'
     plan_for_each_page[s[0]][anchor] = str(doc[0])
   for href, doc_for_id in plan_for_each_page.items():
     soup = cached_soup(href)
-    curlink = doc_for_id.get('vinaya', bmc_href_to_uri(href))
+    curlink = doc_for_id.get('content', doc_for_id.get('vinaya', bmc_href_to_uri(href)))
     internal_link_map[href] = curlink
     for elem in soup.find_all(attrs={'id': True}):
       if elem['id'] in doc_for_id:
