@@ -8,10 +8,19 @@ jobs:
   Build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-python@v5
+      - name: Create GitHub Deploy App Token
+        id: app-token
+        uses: actions/create-github-app-token@main
         with:
-          python-version: '3.10'
-      - uses: actions/checkout@v4
+          client-id: ${{ secrets.DEPLOY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          owner: obu-labs
+          repositories: vinaya
+          permission-actions: write
+      - uses: actions/setup-python@main
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@main
       - run: |
           wget "https://github.com/obu-labs/pali-vinaya-notes/releases/latest/download/scidmap.json"
           pip install -r requirements.txt
@@ -21,5 +30,5 @@ jobs:
           path: "The BMC"
           metadata_file: metadata.yaml
       - env:
-          GH_TOKEN: ${{ secrets.VINAYA_SITE_PUSH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: gh --repo obu-labs/vinaya workflow run build.yaml
