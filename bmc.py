@@ -60,6 +60,7 @@ TOC_URLS_TO_SKIP = {
   "./Section0068.html",
   "./Section0072.html",
 }
+
 URL_TITLE_OVERRIDES = {
   "./Section0008.html": "Nissaya",
   "./Section0008.html#sigil_toc_id_6": "Nissaya Duties",
@@ -75,7 +76,8 @@ URL_TITLE_OVERRIDES = {
   "./Section0028.html#appendixX": "A pupil’s duties as attendant to his mentor",
   "./Section0030.html": "Rule Index",
   "./Section0038.html#sigil_toc_id_49": "Format of the Khandhakas",
-  "./Section0038.html#sigil_toc_id_50": "The Khandhaka Rules",
+  # sigil_toc_id_50 ("The Khandhaka Rules") is handled by the link.text=="Rules" branch
+  # in _build_plan_from_toc and never reaches link_to_note_title
   "./Section0038.html#sigil_toc_id_51": "Methodology",
   "./Section0050.html#sigil_toc_id_140": "The Rains Determination",
   "./Section0050.html#sigil_toc_id_141": "The Duration of the Rains",
@@ -131,6 +133,12 @@ URL_TITLE_OVERRIDES = {
   "./Section0070.html#sigil_toc_id_267": "The Transaction for Suddhanta-parivāsa (Purifying Probation)",
 }
 
+
+# Track which of these overrides we hit to make sure we got all the content we expected
+_toc_url_to_subdir_used: set[str] = set()
+_toc_urls_to_skip_used: set[str] = set()
+_url_title_overrides_used: set[str] = set()
+
 ENGLISH_DIGITS = ["One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"]
 
 ROOT_FOLDER = Path(__file__).parent
@@ -149,7 +157,9 @@ def cached_get(url: str) -> str:
 
 def link_to_subdir_name(link: bs4.element.Tag) -> str:
   try:
-    return TOC_URL_TO_SUBDIR[link['href']]
+    result = TOC_URL_TO_SUBDIR[link['href']]
+    _toc_url_to_subdir_used.add(link['href'])
+    return result
   except KeyError:
     pass
   ret = unidecode(link.text.strip())
@@ -166,7 +176,9 @@ def link_to_subdir_name(link: bs4.element.Tag) -> str:
 def link_to_note_title(link: bs4.element.Tag) -> str:
   assert link.name == 'a'
   try:
-    return URL_TITLE_OVERRIDES[link['href']]
+    result = URL_TITLE_OVERRIDES[link['href']]
+    _url_title_overrides_used.add(link['href'])
+    return result
   except KeyError:
     pass
   ret = unidecode(link.text.strip())
@@ -221,6 +233,8 @@ def _build_plan_from_toc(toc_element: bs4.element.Tag, cwd: Path) -> list[tuple[
       cwd.mkdir(exist_ok=True)
       if subdir == 'vol2':
         prefix = 'BMCv2'
+    if url in TOC_URLS_TO_SKIP:
+      _toc_urls_to_skip_used.add(url)
     if url not in TOC_URLS_TO_SKIP and not (prefix == "BMCv2" and link.text == "Discussions" and link["href"] != "./Section0038.html#sigil_toc_id_51"):
       if is_patimokkha_rule:
         if link.text.isdigit():
@@ -301,7 +315,14 @@ def forumlate_plan() -> list[tuple[Path, str]]:
   toc_html = cached_get(TOC_URL)
   soup = bs4.BeautifulSoup(toc_html, 'html.parser')
   contents = soup.find(id="contents")
+  if contents is None:
+    raise Exception(
+      "TOC page has no element with id='contents'. "
+      "The site structure may have changed."
+    )
   toc = contents.find_next('li')
+  if toc is None:
+    raise Exception("TOC 'contents' element contains no <li> items.")
   return _build_plan_from_toc(toc, BMC_FOLDER)
 
 @cache
@@ -310,7 +331,13 @@ def cached_soup(href: str) -> bs4.element.Tag:
     cached_get(bmc_href_to_uri(href)),
     'html.parser',
   )
-  return soup.find(id="content") or soup.find(id="vinaya")
+  content = soup.find(id="content") or soup.find(id="vinaya")
+  if content is None:
+    raise Exception(
+      f"Page {href!r} has neither id='content' nor id='vinaya'. "
+      "The site structure may have changed."
+    )
+  return content
 
 @cache
 def cooked_soup(href: str) -> bs4.element.Tag:
@@ -325,17 +352,32 @@ def cooked_soup(href: str) -> bs4.element.Tag:
       linkelem['href'] = bmc_href_to_uri(ahref)
   return soup
 
-def first_sibling(element: bs4.element.Tag) -> bs4.element.Tag:
-  ret = element
-  while ret.find_previous_sibling():
-    ret = ret.find_previous_sibling()
-  return ret
+def _ancestor_child(node: bs4.element.Tag, ancestor: bs4.element.Tag) -> bs4.element.Tag:
+  """Return the direct child of `ancestor` that contains (or is) `node`."""
+  child = node
+  while child.parent != ancestor:
+    child = child.parent
+    if child is None:
+      raise Exception(f"Node {node} is not a descendant of ancestor {ancestor}")
+  return child
 
-def last_sibling(element: bs4.element.Tag) -> bs4.element.Tag:
-  ret = element
-  while ret.find_next_sibling():
-    ret = ret.find_next_sibling()
-  return ret
+def _lowest_common_ancestor(
+  a: bs4.element.Tag,
+  b: bs4.element.Tag,
+  root: bs4.element.Tag,
+) -> bs4.element.Tag:
+  """Return the lowest ancestor of both `a` and `b` that is a descendant-or-equal of `root`."""
+  a_ancestors = set()
+  cur = a
+  while cur is not None and cur != root.parent:
+    a_ancestors.add(id(cur))
+    cur = cur.parent
+  cur = b
+  while cur is not None and cur != root.parent:
+    if id(cur) in a_ancestors:
+      return cur
+    cur = cur.parent
+  raise Exception(f"No common ancestor of {a} and {b} within {root}")
 
 def html_range(soup: bs4.element.Tag, relative_to: Path, startid=None, endid=None) -> str:
   def renderhtml(element: bs4.element.Tag) -> str:
@@ -344,31 +386,75 @@ def html_range(soup: bs4.element.Tag, relative_to: Path, startid=None, endid=Non
         if linkelem['href'].startswith(str(ROOT_FOLDER)):
           linkelem['href'] = os.path.relpath(linkelem['href'], relative_to).replace(' ', '%20')
     return str(element)
+
   if not (startid or endid):
     return str(soup)
-  collected_html = []
-  include_last = False
-  if startid:
-    startid = soup.find(id=startid)
-  if endid:
-    endid = soup.find(id=endid)
-  if not startid:
-    startid = first_sibling(endid)
-  if not endid:
+
+  start_elem = soup.find(id=startid) if startid else None
+  end_elem   = soup.find(id=endid)   if endid   else None
+
+  if startid and start_elem is None:
+    raise Exception(
+      f"html_range: id={startid!r} not found in page. "
+    )
+  if endid and end_elem is None:
+    raise Exception(
+      f"html_range: id={endid!r} not found in page. "
+    )
+
+  # Find LCA and lift both endpoints to direct children of it.
+  # For the None cases, we call _ancestor_child(elem, soup) which walks up to the
+  # single direct tag child of soup (always a <section epub_type="chapter|introduction">).
+  # That single child becomes the LCA, and a second _ancestor_child call lifts the
+  # endpoint to the sibling level within it.
+  if start_elem is None:
+    # No start: collect from the first sibling of end_elem's chapter-level ancestor.
+    lca = _ancestor_child(end_elem, soup)  # e.g. <section epub_type="chapter">
+    if lca is end_elem:
+      raise Exception(
+        f"html_range: id={endid!r} is a direct child of soup — cannot lift further. "
+      )
+    end_child = _ancestor_child(end_elem, lca)
+    cur = end_child
+    while cur.find_previous_sibling():
+      cur = cur.find_previous_sibling()
+    start_child  = cur
+    include_last = False
+  elif end_elem is None:
+    # No end: collect from start_elem's chapter-level ancestor through its last sibling.
+    lca = _ancestor_child(start_elem, soup)
+    if lca is start_elem:
+      raise Exception(
+        f"html_range: id={startid!r} is a direct child of soup — cannot lift further. "
+        "The site structure may have changed."
+      )
+    start_child = _ancestor_child(start_elem, lca)
+    cur = start_child
+    while cur.find_next_sibling():
+      cur = cur.find_next_sibling()
+    end_child    = cur
     include_last = True
-    endid = last_sibling(startid)
-  if startid.parent != endid.parent:
-    if endid.text == "Rules":
-      include_last = True
-      endid = last_sibling(startid)
-    else:
-      raise Exception(f"{str(startid)} and {str(endid)} are not siblings")
-  while startid != endid:
-    if not isinstance(startid, bs4.Comment):
-      collected_html.append(renderhtml(startid))
-    startid = startid.next_sibling
+  else:
+    lca         = _lowest_common_ancestor(start_elem, end_elem, soup)
+    start_child = _ancestor_child(start_elem, lca)
+    end_child   = _ancestor_child(end_elem,   lca)
+    if start_child is end_child:
+      raise Exception(
+        f"html_range: id={startid!r} and id={endid!r} lifted to the same LCA child "
+        f"({start_child!r}). They may be nested, which is not supported. "
+      )
+    include_last = False
+
+  collected_html = []
+  cur = start_child
+  while cur != end_child:
+    if not isinstance(cur, bs4.NavigableString) and not isinstance(cur, bs4.Comment):
+      collected_html.append(renderhtml(cur))
+    cur = cur.next_sibling
+    if cur is None:
+      raise Exception(f"end_child not found as sibling of start_child under LCA {lca}")
   if include_last:
-    collected_html.append(renderhtml(endid))
+    collected_html.append(renderhtml(end_child))
   return ''.join(collected_html)
 
 def get_rule_link(href: str) -> Path | None:
@@ -486,3 +572,22 @@ if __name__ == "__main__":
   build_internal_link_map(plan)
   for i in range(len(plan)):
     execute_plan(plan, i)
+
+  # Sanity-check: every entry in the three constant dicts/sets must have been
+  # visited during the run.  An unused entry means either the TOC changed and
+  # a URL disappeared, or the constant itself has a typo.
+  unused_subdir  = set(TOC_URL_TO_SUBDIR)  - _toc_url_to_subdir_used
+  unused_skip    = TOC_URLS_TO_SKIP        - _toc_urls_to_skip_used
+  unused_title   = set(URL_TITLE_OVERRIDES) - _url_title_overrides_used
+  errors = []
+  if unused_subdir:
+    errors.append(f"TOC_URL_TO_SUBDIR entries never used (typo or URL changed?):\n"
+                  + "\n".join(f"  {k!r}" for k in sorted(unused_subdir)))
+  if unused_skip:
+    errors.append(f"TOC_URLS_TO_SKIP entries never seen in TOC (typo or URL changed?):\n"
+                  + "\n".join(f"  {k!r}" for k in sorted(unused_skip)))
+  if unused_title:
+    errors.append(f"URL_TITLE_OVERRIDES entries never used (typo or URL changed?):\n"
+                  + "\n".join(f"  {k!r}" for k in sorted(unused_title)))
+  if errors:
+    raise Exception("We failed to reach all the expected content:\n\n" + "\n\n".join(errors))
